@@ -1,0 +1,32 @@
+{
+  "server": {
+    "host": "0.0.0.0",
+    "port": 9000
+  },
+  "pocketbase": {
+    "url": "http://localhost:8090",
+    "serviceAccount": "admin@example.com",
+    "servicePassword": "secure-password",
+    "userCollection": "mqtt_users",
+    "roleCollection": "mqtt_roles"
+  },
+  "routes": [
+    {
+      "pathPrefix": "/api/v1/device-status",
+      "targetUrl": "http://localhost:8080",
+      "stripPrefix": false
+    },
+    {
+      "pathPrefix": "/api/v1/sensor-data",
+      "targetUrl": "http://localhost:8081",
+      "stripPrefix": false
+    },
+    {
+      "pathPrefix": "/api/v2",
+      "targetUrl": "http://localhost:8082",
+      "stripPrefix": true
+    }
+  ],
+  "logLevel": "info",
+  "cacheTTLSeconds": 300
+}
