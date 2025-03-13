@@ -239,12 +239,32 @@ func (g *ApiGateway) authMiddleware(next http.Handler) http.Handler {
 			return
 		}
 		
+		// Extract the top-level prefix from the path for better debug logging
+		pathParts := strings.SplitN(strings.TrimPrefix(r.URL.Path, "/"), "/", 2)
+		topLevelPrefix := ""
+		if len(pathParts) > 0 {
+			topLevelPrefix = pathParts[0]
+		}
+		
 		// Check if user has permission to access this path
 		if !g.permMatcher.HasPermission(r.URL.Path, r.Method, publishPermissions, subscribePermissions) {
+			g.logger.Debug("Permission denied",
+				zap.String("path", r.URL.Path),
+				zap.String("method", r.Method),
+				zap.String("top_level_prefix", topLevelPrefix),
+				zap.Strings("publish_permissions", publishPermissions),
+				zap.Strings("subscribe_permissions", subscribePermissions))
+				
 			g.metrics.RecordAuthFailure("insufficient_permissions")
 			g.sendError(w, http.StatusForbidden, "insufficient permissions")
 			return
 		}
+		
+		g.logger.Debug("Permission granted",
+			zap.String("path", r.URL.Path),
+			zap.String("method", r.Method),
+			zap.String("top_level_prefix", topLevelPrefix),
+			zap.String("username", user.Username))
 		
 		// Add user and role to request context
 		ctx := context.WithValue(r.Context(), "user", user)
@@ -260,6 +280,10 @@ func (g *ApiGateway) authMiddleware(next http.Handler) http.Handler {
 
 // setupProxyRoutes configures the proxy routes from the configuration
 func (g *ApiGateway) setupProxyRoutes() error {
+	// Create a route map for faster lookups
+	routeMap := make(map[string]*http.Handler)
+	
+	// First, set up all the proxy handlers
 	for _, route := range g.routes {
 		targetURL, err := url.Parse(route.TargetURL)
 		if err != nil {
@@ -317,12 +341,34 @@ func (g *ApiGateway) setupProxyRoutes() error {
 			g.sendError(w, http.StatusBadGateway, "backend service error")
 		}
 		
-		// Register the route with authentication middleware
-		g.router.Group(func(r chi.Router) {
-			r.Use(g.authMiddleware)
-			r.Handle(route.PathPrefix+"*", proxy)
-		})
+		// Store the proxy handler in our map
+		handler := http.Handler(proxy)
+		routeMap[route.PathPrefix] = &handler
 	}
+	
+	// Apply global authentication middleware to all requests except system endpoints (/health, /metrics)
+	g.router.Group(func(r chi.Router) {
+		r.Use(g.authMiddleware)
+		
+		// Register specific routes
+		for _, route := range g.routes {
+			if handler, ok := routeMap[route.PathPrefix]; ok {
+				r.Handle(route.PathPrefix+"*", *handler)
+			}
+		}
+		
+		// Add a catch-all route for any path that doesn't match defined routes
+		// This ensures that paths like /acm/... are properly rejected with 403 if not authorized
+		r.HandleFunc("/*", func(w http.ResponseWriter, r *http.Request) {
+			// If we reach here, it means the path didn't match any defined route
+			// The authMiddleware would have already checked permissions and rejected
+			// unauthorized requests, so this is a fallback for paths that aren't configured
+			g.logger.Warn("Request to undefined route", 
+				zap.String("path", r.URL.Path),
+				zap.String("method", r.Method))
+			g.sendError(w, http.StatusNotFound, "no route configured for this path")
+		})
+	})
 	
 	return nil
 }

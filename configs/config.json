@@ -7,7 +7,7 @@
     "url": "http://localhost:8090",
     "serviceAccount": "admin@example.com",
     "servicePassword": "secure-password",
-    "userCollection": "mqtt_users",
+    "userCollection": "users",
     "roleCollection": "mqtt_roles"
   },
   "routes": [
@@ -27,6 +27,14 @@
       "stripPrefix": true
     }
   ],
-  "logLevel": "info",
+  "logging": {
+    "level": "info",
+    "outputs": ["console", "file"],
+    "filePath": "/var/log/api-gateway/api-gateway.log",
+    "maxSizeMB": 100,
+    "maxAgeDays": 30,
+    "maxBackups": 5,
+    "compress": true
+  },
   "cacheTTLSeconds": 300
 }

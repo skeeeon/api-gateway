@@ -9,10 +9,47 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strings"
 	"time"
 
 	"go.uber.org/zap"
 )
+
+// PBTime is a custom time type for handling PocketBase's datetime format
+type PBTime time.Time
+
+// UnmarshalJSON custom unmarshaler for PocketBase timestamps
+func (pt *PBTime) UnmarshalJSON(data []byte) error {
+	// PocketBase returns dates with space instead of T between date and time
+	// Example: "2025-03-12 03:06:30.051Z"
+	s := strings.Trim(string(data), "\"")
+	if s == "null" || s == "" {
+		*pt = PBTime(time.Time{})
+		return nil
+	}
+
+	// Try standard RFC3339 first (with T)
+	t, err := time.Parse(time.RFC3339, s)
+	if err != nil {
+		// Try PocketBase format (with space)
+		t, err = time.Parse("2006-01-02 15:04:05.999Z", s)
+		if err != nil {
+			// Try a third format without milliseconds
+			t, err = time.Parse("2006-01-02 15:04:05Z", s)
+			if err != nil {
+				return fmt.Errorf("failed to parse PocketBase time: %s. Error: %w", s, err)
+			}
+		}
+	}
+
+	*pt = PBTime(t)
+	return nil
+}
+
+// Time converts PBTime to standard time.Time
+func (pt PBTime) Time() time.Time {
+	return time.Time(pt)
+}
 
 // Client is a PocketBase API client
 type Client struct {
@@ -26,13 +63,16 @@ type Client struct {
 
 // User represents a user in PocketBase
 type User struct {
-	ID       string    `json:"id"`
-	Username string    `json:"username"`
-	Email    string    `json:"email"`
-	RoleID   string    `json:"role_id"`
-	Active   bool      `json:"active"`
-	Created  time.Time `json:"created"`
-	Updated  time.Time `json:"updated"`
+	ID             string    `json:"id"`
+	Username       string    `json:"username"`
+	Email          string    `json:"email"`
+	RoleID         string    `json:"roleID"` // Changed from role_id to match PocketBase
+	Active         bool      `json:"active"`
+	CollectionID   string    `json:"collectionId,omitempty"`
+	CollectionName string    `json:"collectionName,omitempty"`
+	Verified       bool      `json:"verified,omitempty"`
+	Created        PBTime    `json:"created"` // Changed to PBTime
+	Updated        PBTime    `json:"updated"` // Changed to PBTime
 }
 
 // Role represents a role in PocketBase with permissions
@@ -41,8 +81,8 @@ type Role struct {
 	Name                 string          `json:"name"`
 	PublishPermissions   json.RawMessage `json:"publish_permissions"`
 	SubscribePermissions json.RawMessage `json:"subscribe_permissions"`
-	Created              time.Time       `json:"created"`
-	Updated              time.Time       `json:"updated"`
+	Created              PBTime          `json:"created"` // Changed to PBTime
+	Updated              PBTime          `json:"updated"` // Changed to PBTime
 }
 
 // PocketBaseListResponse represents a generic list response from PocketBase
@@ -126,14 +166,16 @@ func (c *Client) GetAllUsers() ([]User, error) {
 		return nil, fmt.Errorf("not authenticated")
 	}
 
+	// Use the standard user collection API instead of trying to construct a custom endpoint
 	endpoint := fmt.Sprintf("%s/api/collections/%s/records", c.baseURL, c.userCollection)
+	c.logger.Debug("Fetching users from PocketBase", zap.String("endpoint", endpoint))
+
 	reqURL, err := url.Parse(endpoint)
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse URL: %w", err)
 	}
 
 	query := reqURL.Query()
-	query.Set("filter", "active=true")
 	query.Set("perPage", "200") // Adjust based on expected user count
 	reqURL.RawQuery = query.Encode()
 
@@ -150,18 +192,33 @@ func (c *Client) GetAllUsers() ([]User, error) {
 	}
 	defer resp.Body.Close()
 
-	body, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
 		return nil, fmt.Errorf("users request failed with status %d: %s", resp.StatusCode, string(body))
 	}
+
+	// Debug: Log raw response to see what we're getting
+	body, _ := io.ReadAll(resp.Body)
+	c.logger.Debug("Received users response", zap.String("body_preview", string(body[:min(len(body), 1000)])))
 
 	var usersResp PocketBaseListResponse[User]
 	if err := json.Unmarshal(body, &usersResp); err != nil {
 		return nil, fmt.Errorf("failed to decode users response: %w", err)
 	}
 
-	c.logger.Info("Retrieved users from PocketBase", zap.Int("count", len(usersResp.Items)))
-	return usersResp.Items, nil
+	// Filter active users if needed
+	var activeUsers []User
+	for _, user := range usersResp.Items {
+		if user.Active {
+			activeUsers = append(activeUsers, user)
+		}
+	}
+
+	c.logger.Info("Retrieved users from PocketBase", 
+		zap.Int("total_count", len(usersResp.Items)), 
+		zap.Int("active_count", len(activeUsers)))
+	
+	return activeUsers, nil
 }
 
 // GetAllRoles retrieves all roles from PocketBase
@@ -305,4 +362,12 @@ func (r *Role) GetSubscribePermissions() ([]string, error) {
 		return nil, err
 	}
 	return permissions, nil
+}
+
+// min returns the smaller of x or y
+func min(x, y int) int {
+    if x < y {
+        return x
+    }
+    return y
 }

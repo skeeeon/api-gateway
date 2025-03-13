@@ -26,8 +26,19 @@ type Config struct {
 	} `mapstructure:"pocketbase"`
 	
 	Routes          []Route `mapstructure:"routes"`
-	LogLevel        string  `mapstructure:"logLevel"`
-	CacheTTLSeconds int     `mapstructure:"cacheTTLSeconds"`
+	
+	// Enhanced logging configuration
+	Logging struct {
+		Level     string `mapstructure:"level"`
+		Outputs   []string `mapstructure:"outputs"` // "console", "file", or both
+		FilePath  string `mapstructure:"filePath"`
+		MaxSize   int    `mapstructure:"maxSizeMB"` // File size in MB before rotation
+		MaxAge    int    `mapstructure:"maxAgeDays"` // Days to retain old log files
+		MaxBackups int   `mapstructure:"maxBackups"` // Maximum number of old log files to retain
+		Compress  bool   `mapstructure:"compress"` // Compress rotated files
+	} `mapstructure:"logging"`
+	
+	CacheTTLSeconds int `mapstructure:"cacheTTLSeconds"`
 }
 
 // Route defines a proxy route
@@ -44,9 +55,18 @@ func LoadConfig(configPath string, logger *zap.Logger) (*Config, error) {
 	// Set default values
 	v.SetDefault("server.host", "0.0.0.0")
 	v.SetDefault("server.port", 9000)
-	v.SetDefault("pocketbase.userCollection", "mqtt_users")
+	v.SetDefault("pocketbase.userCollection", "users")
 	v.SetDefault("pocketbase.roleCollection", "mqtt_roles")
-	v.SetDefault("logLevel", "info")
+	
+	// Default logging configuration
+	v.SetDefault("logging.level", "info")
+	v.SetDefault("logging.outputs", []string{"console"})
+	v.SetDefault("logging.filePath", "./logs/api-gateway.log")
+	v.SetDefault("logging.maxSizeMB", 100)
+	v.SetDefault("logging.maxAgeDays", 30)
+	v.SetDefault("logging.maxBackups", 5)
+	v.SetDefault("logging.compress", true)
+	
 	v.SetDefault("cacheTTLSeconds", 300)
 	
 	// Configure file path
@@ -121,6 +141,18 @@ func validateConfig(config *Config) error {
 		
 		if route.TargetURL == "" {
 			return fmt.Errorf("routes[%d].targetUrl is required", i)
+		}
+	}
+	
+	// Validate logging configuration
+	if len(config.Logging.Outputs) == 0 {
+		return fmt.Errorf("at least one logging output must be specified")
+	}
+	
+	// If file logging is enabled, check if file path is provided
+	for _, output := range config.Logging.Outputs {
+		if output == "file" && config.Logging.FilePath == "" {
+			return fmt.Errorf("logging.filePath is required when file logging is enabled")
 		}
 	}
 	

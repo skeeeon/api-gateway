@@ -12,36 +12,49 @@ import (
 	"time"
 
 	"go.uber.org/zap"
-	"go.uber.org/zap/zapcore"
 
 	"api-gateway/internal/config"
 	"api-gateway/internal/gateway"
+	"api-gateway/internal/logger"
 )
 
 func main() {
-	// Initialize logger with initial configuration
-	logger := initLogger("info")
-	defer logger.Sync()
+	// Initialize basic logger for bootstrapping
+	bootstrapLogger, _ := zap.NewProduction()
+	defer bootstrapLogger.Sync()
 
-	logger.Info("Starting API Gateway service")
+	bootstrapLogger.Info("Starting API Gateway service")
 
 	// Get configuration file path
 	configPath := config.GetConfigPath()
 
-	// Load configuration
-	cfg, err := config.LoadConfig(configPath, logger)
+	// Load configuration with bootstrap logger
+	cfg, err := config.LoadConfig(configPath, bootstrapLogger)
 	if err != nil {
-		logger.Fatal("Failed to load configuration", zap.Error(err))
+		bootstrapLogger.Fatal("Failed to load configuration", zap.Error(err))
 	}
 
-	// Re-initialize logger with configuration
-	logger = initLogger(cfg.LogLevel)
-	defer logger.Sync()
-
-	// Create API Gateway
-	gw, err := gateway.New(cfg, logger)
+	// Initialize the enhanced logger with config
+	log, err := logger.New(logger.Config{
+		Level:      cfg.Logging.Level,
+		Outputs:    cfg.Logging.Outputs,
+		FilePath:   cfg.Logging.FilePath,
+		MaxSize:    cfg.Logging.MaxSize,
+		MaxAge:     cfg.Logging.MaxAge,
+		MaxBackups: cfg.Logging.MaxBackups,
+		Compress:   cfg.Logging.Compress,
+	})
 	if err != nil {
-		logger.Fatal("Failed to create API Gateway", zap.Error(err))
+		bootstrapLogger.Fatal("Failed to initialize logger", zap.Error(err))
+	}
+	defer log.Sync()
+
+	log.Info("API Gateway service started with enhanced logging")
+
+	// Create API Gateway with our enhanced logger
+	gw, err := gateway.New(cfg, log)
+	if err != nil {
+		log.Fatal("Failed to create API Gateway", zap.Error(err))
 	}
 
 	// Create HTTP server
@@ -52,9 +65,9 @@ func main() {
 
 	// Start the server in a goroutine
 	go func() {
-		logger.Info("Starting HTTP server", zap.String("address", server.Addr))
+		log.Info("Starting HTTP server", zap.String("address", server.Addr))
 		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			logger.Fatal("HTTP server error", zap.Error(err))
+			log.Fatal("HTTP server error", zap.Error(err))
 		}
 	}()
 
@@ -64,7 +77,7 @@ func main() {
 
 	// Wait for interrupt signal
 	<-stop
-	logger.Info("Shutting down gracefully...")
+	log.Info("Shutting down gracefully...")
 
 	// Create a deadline for the shutdown
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
@@ -72,34 +85,8 @@ func main() {
 
 	// Shut down the server
 	if err := server.Shutdown(ctx); err != nil {
-		logger.Error("Server shutdown error", zap.Error(err))
+		log.Error("Server shutdown error", zap.Error(err))
 	}
 
-	logger.Info("Server stopped, goodbye!")
-}
-
-// initLogger initializes the zap logger with the specified log level
-func initLogger(logLevel string) *zap.Logger {
-	// Parse log level
-	level := zap.InfoLevel
-	if err := level.UnmarshalText([]byte(logLevel)); err != nil {
-		// Default to info level if invalid
-		level = zap.InfoLevel
-	}
-
-	// Logger configuration
-	config := zap.NewProductionConfig()
-	config.Level = zap.NewAtomicLevelAt(level)
-	config.EncoderConfig.EncodeTime = zapcore.ISO8601TimeEncoder
-	config.DisableCaller = false
-	config.DisableStacktrace = false
-
-	// Create logger
-	logger, err := config.Build()
-	if err != nil {
-		fmt.Printf("Failed to initialize logger: %v\n", err)
-		os.Exit(1)
-	}
-
-	return logger
+	log.Info("Server stopped, goodbye!")
 }
