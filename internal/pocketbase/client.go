@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"strings"
@@ -106,11 +107,40 @@ type JWTResponse struct {
 	Record User   `json:"record"`
 }
 
-// NewClient creates a new PocketBase client
+// NewClient creates a new PocketBase client with optimized connection pooling
 func NewClient(baseURL, userCollection, roleCollection string, logger *zap.Logger) *Client {
+	// Configure an optimized transport for connection pooling
+	transport := &http.Transport{
+		Proxy: http.ProxyFromEnvironment,
+		DialContext: (&net.Dialer{
+			Timeout:   5 * time.Second,
+			KeepAlive: 30 * time.Second,
+		}).DialContext,
+		ForceAttemptHTTP2:     true,
+		MaxIdleConns:          100,
+		MaxIdleConnsPerHost:   10,
+		MaxConnsPerHost:       20,
+		IdleConnTimeout:       90 * time.Second,
+		TLSHandshakeTimeout:   5 * time.Second,
+		ExpectContinueTimeout: 1 * time.Second,
+		ResponseHeaderTimeout: 5 * time.Second,
+	}
+
+	// Create client with the configured transport
+	httpClient := &http.Client{
+		Transport: transport,
+		Timeout:   10 * time.Second,
+	}
+
+	logger.Debug("Created PocketBase client with optimized connection pooling",
+		zap.Int("maxIdleConns", 100),
+		zap.Int("maxIdleConnsPerHost", 10),
+		zap.Int("maxConnsPerHost", 20),
+		zap.Duration("idleConnTimeout", 90 * time.Second))
+
 	return &Client{
 		baseURL:        baseURL,
-		httpClient:     &http.Client{Timeout: 10 * time.Second},
+		httpClient:     httpClient,
 		logger:         logger,
 		userCollection: userCollection,
 		roleCollection: roleCollection,
