@@ -19,7 +19,7 @@ A secure, high-performance API Gateway that provides authentication and authoriz
 
 1. Clone the repository:
 ```bash
-git clone https://github.com/yourusername/api-gateway
+git clone https://github.com/skeeeon/api-gateway
 cd api-gateway
 ```
 
