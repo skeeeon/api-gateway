@@ -99,17 +99,20 @@ The application uses a JSON configuration file with optional environment variabl
     {
       "pathPrefix": "/api/v1/device-status",
       "targetUrl": "http://localhost:8080",
-      "stripPrefix": false
+      "stripPrefix": false,
+      "protected": false
     },
     {
       "pathPrefix": "/api/v1/sensor-data",
       "targetUrl": "http://localhost:8081",
-      "stripPrefix": false
+      "stripPrefix": false,
+      "protected": true
     },
     {
       "pathPrefix": "/api/v2",
       "targetUrl": "http://localhost:8082",
-      "stripPrefix": true
+      "stripPrefix": true,
+      "protected": true
     }
   ],
   "logging": {
@@ -143,6 +146,7 @@ Array of proxy routes, each with:
 - `pathPrefix`: HTTP path prefix to match (required)
 - `targetUrl`: Backend service URL (required)
 - `stripPrefix`: Whether to strip prefix before proxying (default: false)
+- `protected`: Whether the route requires authentication (default: true)
 
 #### Logging Configuration
 - `level`: Log level (debug, info, warn, error) (default: "info")
@@ -179,6 +183,40 @@ Usage of api-gateway:
   --config string
         path to config file (default "config.json")
 ```
+
+### Protected vs Unprotected Routes
+
+The API Gateway supports both authenticated and unauthenticated routes:
+
+- **Protected Routes**: Require a valid JWT token and permission check (default)
+- **Unprotected Routes**: Allow public access without authentication
+
+This enables common authentication workflows where the gateway sits in front of your authentication service:
+
+```json
+{
+  "routes": [
+    {
+      "pathPrefix": "/auth",
+      "targetUrl": "http://pocketbase:8090",
+      "stripPrefix": false,
+      "protected": false  // Public authentication endpoints
+    },
+    {
+      "pathPrefix": "/api",
+      "targetUrl": "http://api-service:8000",
+      "stripPrefix": false,
+      "protected": true   // Protected API endpoints
+    }
+  ]
+}
+```
+
+With this configuration:
+1. Users can access `/auth/users/auth-with-password` to authenticate with PocketBase
+2. PocketBase returns a JWT token
+3. Users include this token in requests to `/api/...` endpoints
+4. API Gateway validates the token and checks permissions before proxying to the API service
 
 ## Permission System
 
