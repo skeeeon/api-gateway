@@ -67,7 +67,7 @@ type User struct {
 	ID             string    `json:"id"`
 	Username       string    `json:"username"`
 	Email          string    `json:"email"`
-	RoleID         string    `json:"roleID"` // Changed from role_id to match PocketBase
+	RoleID         string    `json:"role_id"` // Changed to role_id to match PocketBase
 	Active         bool      `json:"active"`
 	CollectionID   string    `json:"collectionId,omitempty"`
 	CollectionName string    `json:"collectionName,omitempty"`

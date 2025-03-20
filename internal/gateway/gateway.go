@@ -280,8 +280,9 @@ func (g *ApiGateway) authMiddleware(next http.Handler) http.Handler {
 
 // setupProxyRoutes configures the proxy routes from the configuration
 func (g *ApiGateway) setupProxyRoutes() error {
-	// Create a route map for faster lookups
-	routeMap := make(map[string]*http.Handler)
+	// Create separate maps for protected and unprotected route handlers
+	protectedRouteMap := make(map[string]*http.Handler)
+	unprotectedRouteMap := make(map[string]*http.Handler)
 	
 	// First, set up all the proxy handlers
 	for _, route := range g.routes {
@@ -293,7 +294,8 @@ func (g *ApiGateway) setupProxyRoutes() error {
 		g.logger.Info("Setting up proxy route", 
 			zap.String("pathPrefix", route.PathPrefix),
 			zap.String("targetURL", route.TargetURL),
-			zap.Bool("stripPrefix", route.StripPrefix))
+			zap.Bool("stripPrefix", route.StripPrefix),
+			zap.Bool("protected", route.Protected))
 		
 		// Create a reverse proxy
 		proxy := httputil.NewSingleHostReverseProxy(targetURL)
@@ -341,29 +343,38 @@ func (g *ApiGateway) setupProxyRoutes() error {
 			g.sendError(w, http.StatusBadGateway, "backend service error")
 		}
 		
-		// Store the proxy handler in our map
+		// Store the proxy handler in the appropriate map based on protection status
 		handler := http.Handler(proxy)
-		routeMap[route.PathPrefix] = &handler
+		if route.Protected {
+			protectedRouteMap[route.PathPrefix] = &handler
+		} else {
+			unprotectedRouteMap[route.PathPrefix] = &handler
+		}
 	}
 	
-	// Apply global authentication middleware to all requests except system endpoints (/health, /metrics)
+	// Set up unprotected routes first (no authentication required)
+	for pathPrefix, handler := range unprotectedRouteMap {
+		g.router.Handle(pathPrefix+"*", *handler)
+		g.logger.Debug("Registered unprotected route", zap.String("pathPrefix", pathPrefix))
+	}
+	
+	// Apply authentication middleware to protected routes
 	g.router.Group(func(r chi.Router) {
 		r.Use(g.authMiddleware)
 		
-		// Register specific routes
-		for _, route := range g.routes {
-			if handler, ok := routeMap[route.PathPrefix]; ok {
-				r.Handle(route.PathPrefix+"*", *handler)
-			}
+		// Register specific protected routes
+		for pathPrefix, handler := range protectedRouteMap {
+			r.Handle(pathPrefix+"*", *handler)
+			g.logger.Debug("Registered protected route", zap.String("pathPrefix", pathPrefix))
 		}
 		
 		// Add a catch-all route for any path that doesn't match defined routes
-		// This ensures that paths like /acm/... are properly rejected with 403 if not authorized
+		// This ensures that paths are properly rejected with 403 if not authorized
 		r.HandleFunc("/*", func(w http.ResponseWriter, r *http.Request) {
 			// If we reach here, it means the path didn't match any defined route
 			// The authMiddleware would have already checked permissions and rejected
 			// unauthorized requests, so this is a fallback for paths that aren't configured
-			g.logger.Warn("Request to undefined route", 
+			g.logger.Warn("Request to undefined protected route", 
 				zap.String("path", r.URL.Path),
 				zap.String("method", r.Method))
 			g.sendError(w, http.StatusNotFound, "no route configured for this path")

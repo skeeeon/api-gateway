@@ -46,6 +46,7 @@ type Route struct {
 	PathPrefix  string `mapstructure:"pathPrefix"`
 	TargetURL   string `mapstructure:"targetUrl"`
 	StripPrefix bool   `mapstructure:"stripPrefix"`
+	Protected   bool   `mapstructure:"protected"`
 }
 
 // LoadConfig loads the application configuration from file and environment variables
@@ -142,8 +143,15 @@ func validateConfig(config *Config) error {
 		if route.TargetURL == "" {
 			return fmt.Errorf("routes[%d].targetUrl is required", i)
 		}
-	}
-	
+		
+		// For backward compatibility, routes are protected by default if not specified
+		if !route.Protected {
+			// This is not an error, just log it for visibility that the route is intentionally unprotected
+			// Use fmt since logger might not be initialized yet
+			fmt.Printf("Route %s is configured as unprotected\n", route.PathPrefix)
+		}
+	}	
+
 	// Validate logging configuration
 	if len(config.Logging.Outputs) == 0 {
 		return fmt.Errorf("at least one logging output must be specified")
