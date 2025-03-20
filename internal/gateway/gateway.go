@@ -172,28 +172,22 @@ func (g *ApiGateway) authMiddleware(next http.Handler) http.Handler {
 			return
 		}
 		
-		// Try to get user from cache by token fingerprint (first 8 chars)
-		tokenKey := token
-		if len(token) > 8 {
-			tokenKey = token[:8] + "..." // We use partial token as cache key for security
-		}
-		
-		user := g.cache.GetUserByToken(tokenKey)
+		// Try to get user from cache by token (now using complete token with secure hashing)
+		user := g.cache.GetUserByToken(token)
 		if user == nil {
 			// User not in cache, validate token with PocketBase
 			fetchedUser, err := g.pbClient.GetUserByToken(token)
 			if err != nil {
 				g.logger.Debug("Token validation failed", 
-					zap.Error(err), 
-					zap.String("token_prefix", tokenKey))
+					zap.Error(err))
 				g.metrics.RecordAuthFailure("invalid_token")
 				g.sendError(w, http.StatusUnauthorized, "invalid or expired token")
 				return
 			}
 			
-			// Add user to cache
+			// Add user to cache with the full token (which will be securely hashed)
 			user = fetchedUser
-			g.cache.AddUser(tokenKey, user)
+			g.cache.AddUser(token, user)
 		}
 		
 		// No need to check if user is active - already checked in GetUserByToken

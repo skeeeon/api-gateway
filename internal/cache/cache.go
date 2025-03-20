@@ -12,32 +12,37 @@ import (
 
 // Cache is an in-memory cache for user and role data
 type Cache struct {
-	userCache       map[string]*pocketbase.User // Map token key -> User
+	userCache       map[string]*pocketbase.User // Map hashed token -> User
 	roleCache       map[string]*pocketbase.Role // Map ID -> Role
 	mutex           sync.RWMutex
 	ttl             time.Duration
 	lastRefreshTime time.Time
 	logger          *zap.Logger
+	tokenHasher     *TokenHasher
 }
 
 // New creates a new cache with the specified TTL
 func New(ttl time.Duration, logger *zap.Logger) *Cache {
 	return &Cache{
-		userCache: make(map[string]*pocketbase.User),
-		roleCache: make(map[string]*pocketbase.Role),
-		ttl:       ttl,
-		logger:    logger,
+		userCache:   make(map[string]*pocketbase.User),
+		roleCache:   make(map[string]*pocketbase.Role),
+		ttl:         ttl,
+		logger:      logger,
+		tokenHasher: NewTokenHasher(),
 	}
 }
 
-// GetUserByToken retrieves a user from the cache by token key
-// The token key is typically the first few characters of the JWT
+// GetUserByToken retrieves a user from the cache by token
+// The token is hashed before lookup to avoid storing raw tokens
 // Returns nil if the user is not in the cache
-func (c *Cache) GetUserByToken(tokenKey string) *pocketbase.User {
+func (c *Cache) GetUserByToken(token string) *pocketbase.User {
 	c.mutex.RLock()
 	defer c.mutex.RUnlock()
 	
-	user, found := c.userCache[tokenKey]
+	// Hash the token to get the cache key
+	hashedToken := c.tokenHasher.HashToken(token)
+	
+	user, found := c.userCache[hashedToken]
 	if !found {
 		return nil
 	}
@@ -58,15 +63,18 @@ func (c *Cache) GetRoleByID(id string) *pocketbase.Role {
 }
 
 // AddUser adds or updates a user in the cache
-// The tokenKey is typically the first few characters of the JWT for security
-func (c *Cache) AddUser(tokenKey string, user *pocketbase.User) {
+// The token is hashed before being used as a key for security
+func (c *Cache) AddUser(token string, user *pocketbase.User) {
 	c.mutex.Lock()
 	defer c.mutex.Unlock()
 	
-	c.userCache[tokenKey] = user
+	// Hash the token to get the cache key
+	hashedToken := c.tokenHasher.HashToken(token)
+	
+	c.userCache[hashedToken] = user
 	c.logger.Debug("Added user to cache", 
 		zap.String("username", user.Username), 
-		zap.String("token_key", tokenKey))
+		zap.String("hashed_token", hashedToken[:8]+"...")) // Log prefix of hash for debugging
 }
 
 // AddRole adds or updates a role in the cache
